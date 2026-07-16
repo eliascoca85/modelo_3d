@@ -1,9 +1,8 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
-import { Canvas, ThreeEvent } from "@react-three/fiber";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Canvas, ThreeEvent, useThree } from "@react-three/fiber";
 import {
-	ContactShadows,
 	Environment,
 	Html,
 	OrbitControls,
@@ -18,6 +17,7 @@ type SelectedArtifact = {
 	label: string;
 	description: string;
 	isMonolith: boolean;
+	position?: Vector3;
 };
 
 type MuseumSceneProps = {
@@ -41,7 +41,7 @@ function resolveObjectLabel(object: Object3D | null) {
 	return "pieza sin nombre";
 }
 
-function buildArtifactDetails(name: string): SelectedArtifact {
+function buildArtifactDetails(name: string, position?: Vector3): SelectedArtifact {
 	const normalizedName = name.trim() || "pieza sin nombre";
 	const isMonolith = /monolito/i.test(normalizedName);
 
@@ -52,6 +52,7 @@ function buildArtifactDetails(name: string): SelectedArtifact {
 			? "Elemento principal del museo. Se detecta por nombre desde Blender y está listo para interacción."
 			: "Pieza interactiva detectada en la escena exportada desde Blender.",
 		isMonolith,
+		position,
 	};
 }
 
@@ -127,7 +128,10 @@ function MuseumScene({
 
 	const handlePointerDown = (event: ThreeEvent<PointerEvent>) => {
 		event.stopPropagation();
-		onSelectArtifact(buildArtifactDetails(resolveObjectLabel(event.object)));
+		// Obtener posición mundial del objeto
+		const worldPosition = new Vector3();
+		event.object.getWorldPosition(worldPosition);
+		onSelectArtifact(buildArtifactDetails(resolveObjectLabel(event.object), worldPosition));
 	};
 
 	return (
@@ -153,61 +157,189 @@ function LoadingOverlay() {
 	);
 }
 
+function CameraLight() {
+	const { camera } = useThree();
+
+	return (
+		<pointLight
+			position={camera.position}
+			intensity={3}
+			color="#ffffff"
+			distance={30}
+			decay={1.2}
+		/>
+	);
+}
+
 function MuseumView() {
 	const [selectedArtifact, setSelectedArtifact] = useState<SelectedArtifact | null>(null);
 	const [availableTargets, setAvailableTargets] = useState<string[]>([]);
+	const [isAnimating, setIsAnimating] = useState(false);
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const controlsRef = useRef<any>(null);
 
 	const monolithTarget = useMemo(
 		() => availableTargets.find((target) => /monolito/i.test(target)) ?? null,
 		[availableTargets],
 	);
 
+	// Animar cámara hacia el monolito cuando se selecciona
+	useEffect(() => {
+		if (selectedArtifact?.isMonolith && selectedArtifact.position && controlsRef.current && !isAnimating) {
+			const controls = controlsRef.current;
+			const targetPosition = selectedArtifact.position.clone();
+			
+			setIsAnimating(true);
+			
+			// Posición final: combinación sutil de zoom y giro a la izquierda
+			const finalPosition = targetPosition.clone().add(new Vector3(-2.5, 0.5, 2));
+			
+			const startPosition = controls.object.position.clone();
+			const startTarget = controls.target.clone();
+			
+			// Animación combinada y sutil (1200ms)
+			const duration = 1200;
+			const startTime = performance.now();
+			
+			function animateCamera(currentTime: number) {
+				const elapsed = currentTime - startTime;
+				const progress = Math.min(elapsed / duration, 1);
+				
+				// Easing más suave (ease-in-out)
+				const eased = progress < 0.5 
+					? 2 * progress * progress 
+					: 1 - Math.pow(-2 * progress + 2, 2) / 2;
+				
+				controls.object.position.lerpVectors(startPosition, finalPosition, eased);
+				controls.target.lerpVectors(startTarget, targetPosition, eased);
+				controls.update();
+				
+				if (progress < 1) {
+					requestAnimationFrame(animateCamera);
+				} else {
+					// Asegurar posición final exacta
+					controls.object.position.copy(finalPosition);
+					controls.target.copy(targetPosition);
+					controls.update();
+					setIsAnimating(false);
+				}
+			}
+			
+			requestAnimationFrame(animateCamera);
+		}
+	}, [selectedArtifact, isAnimating]);
+
+	// Actualizar target de OrbitControls cuando se selecciona el monolito
+	useEffect(() => {
+		if (selectedArtifact?.isMonolith && selectedArtifact.position && controlsRef.current) {
+			const controls = controlsRef.current;
+			// Actualizar target al monolito
+			controls.target.set(
+				selectedArtifact.position.x,
+				selectedArtifact.position.y,
+				selectedArtifact.position.z
+			);
+			// Asegurar que los controles estén habilitados
+			controls.enabled = true;
+			controls.update();
+		} else if (!selectedArtifact && controlsRef.current) {
+			// Volver al target original cuando se cierra
+			const controls = controlsRef.current;
+			controls.target.set(0, -0.5, 0);
+			controls.update();
+		}
+	}, [selectedArtifact]);
+
 	return (
 		<section
 			className="relative h-screen w-screen overflow-hidden bg-[#050816] text-white"
-			onPointerDown={() => {
-				if (selectedArtifact) {
-					setSelectedArtifact(null);
-				}
-			}}
 		>
 			<div className="museum-backdrop absolute inset-0" />
 			<div className="absolute inset-0">
 				<Canvas
 					shadows
 					dpr={[1, 1.75]}
-					camera={{ position: [4.5, 5.9, 7.2], fov: 31 }}
-					gl={{ alpha: true, antialias: true, powerPreference: "high-performance" }}
+					camera={{ position: [-7, 1.3, 7.5], fov: 31 }}
+					gl={{ 
+						alpha: true, 
+						antialias: true, 
+						powerPreference: "high-performance"
+					}}
 					className="h-full w-full"
 				>
 					<color attach="background" args={['#050816']} />
 					<fog attach="fog" args={['#050816', 10, 30]} />
-					<ambientLight intensity={1.25} />
-					<hemisphereLight intensity={0.8} color="#ffe9b2" groundColor="#10172f" />
-					<directionalLight position={[7, 11, 7]} intensity={2.6} castShadow shadow-mapSize-width={2048} shadow-mapSize-height={2048} />
+
+					{/* Luz direccional principal para sombras limpias */}
+					<directionalLight
+						position={[5, 8, 5]}
+						intensity={10}
+						color="#ffffff"
+						castShadow
+						shadow-mapSize={[1024, 1024]}
+						shadow-camera-left={-10}
+						shadow-camera-right={10}
+						shadow-camera-top={10}
+						shadow-camera-bottom={-10}
+						shadow-camera-near={0.1}
+						shadow-camera-far={30}
+					/>
+
+					{/* Relleno ambiental mejorado */}
+					<ambientLight intensity={1.0} color="#f0e6d8" />
+
+					{/* Pared izquierda — cuadros y esculturas (intensidad aumentada) */}
+					<pointLight position={[-3.5, 4, 1.5]} intensity={4.0} color="#fff5e6" distance={20} decay={1} />
+
+					{/* Pared del fondo — galería de cuadros (más focalizado) */}
+					<pointLight position={[0.5, 4.5, -3]} intensity={3.5} color="#fff8dc" distance={20} decay={1} />
+
+					{/* Vitrina central — pieza destacada (iluminación más fuerte) */}
+					<pointLight position={[2, 4, 2]} intensity={6.0} color="#ffffff" distance={20} decay={0.7} />
+
+					{/* Pared derecha — escultura y cuadro grande */}
+					<pointLight position={[4, 4.5, -0.5]} intensity={4.0} color="#fff5e6" distance={20} decay={1} />
+
+					{/* Cenital suave — iluminación general desde arriba */}
+					<pointLight position={[0, 6.5, 0]} intensity={2.5} color="#f0e6ff" distance={30} decay={0.8} />
+
+					{/* Relleno lateral izquierdo para suavizar sombras */}
+					<pointLight position={[-2.5, 2.5, 3.5]} intensity={1.5} color="#e8e0d0" distance={18} decay={1.2} />
+
+					{/* Relleno lateral derecho para suavizar sombras */}
+					<pointLight position={[2.5, 2.5, 3.5]} intensity={1.5} color="#e8e0d0" distance={18} decay={1.2} />
+
+					{/* Luz de relleno desde abajo para reducir contrastes extremos */}
+					<pointLight position={[0, -1, 2]} intensity={1.0} color="#d8d0c0" distance={15} decay={1.5} />
+
+					{/* Contraluz fuerte desde atrás para crear siluetas y sombras dramáticas */}
+					<pointLight position={[0, 3, -5]} intensity={6.0} color="#ffffff" distance={25} decay={0.8} />
+
+					{/* Luz que sigue la cámara */}
+					<CameraLight />
 
 					<Suspense fallback={<LoadingOverlay />}>
 						<MuseumScene
 							onSelectArtifact={setSelectedArtifact}
 							onTargetsDetected={setAvailableTargets}
 						/>
-						<Environment preset="studio" />
-						<ContactShadows position={[0, -1.1, 0]} opacity={0.42} scale={24} blur={2.8} far={10} />
 					</Suspense>
 
 					<OrbitControls
+						ref={controlsRef}
 						enablePan={false}
 						minDistance={2.5}
 						maxDistance={13}
 						maxPolarAngle={Math.PI * 0.56}
-						target={[0.45, 2.1, 0]}
+						target={[0, -0.5, 0]}
+						autoRotate={false}
 					/>
 				</Canvas>
 			</div>
 
 			{selectedArtifact ? (
-				<div className="pointer-events-none absolute inset-0 flex items-end justify-start p-4 sm:p-6 lg:p-8">
-					<div className="pointer-events-auto w-full max-w-md rounded-3xl border border-white/10 bg-black/60 p-5 text-white shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+				<div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-end p-4 sm:p-6 lg:p-8">
+					<div className="pointer-events-auto w-full max-w-md rounded-3xl border border-white/10 bg-black/80 p-5 text-white shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl">
 						<div className="flex items-start justify-between gap-4">
 							<div>
 								<p className="text-xs uppercase tracking-[0.3em] text-amber-100/75">Objeto detectado</p>
