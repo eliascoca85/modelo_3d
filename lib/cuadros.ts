@@ -44,14 +44,20 @@ export async function ensureDataFile(): Promise<void> {
 }
 
 export async function readCuadros(): Promise<Cuadro[]> {
-  await ensureDataFile();
+  // Lectura estricta: sin mkdir ni escritura. En entornos serverless con FS de
+  // solo lectura (Vercel), `ensureDirs`/`ensureDataFile` lanzaban EROFS y
+  // derribaban `/`, `/museo` y `/admin/cuadros` con "A server error occurred".
+  // Acá solo leemos el JSON versionado; si faltara, el catch degrada al seed
+  // canónico. Los mkdir/write quedan restringidos a las mutaciones (server
+  // actions), donde un fallo del FS se atrapa y se reporta al usuario.
   try {
     const txt = await fs.readFile(DATA_FILE, "utf8");
     const parsed = JSON.parse(txt) as Cuadro[];
     if (!Array.isArray(parsed)) {
       return CANONICAL_CUADROS.map(emptyCuadro);
     }
-    return mergeCanonical(parsed);
+    const merged = mergeCanonical(parsed);
+    return Promise.all(merged.map(resolveMissingUpload));
   } catch {
     return CANONICAL_CUADROS.map(emptyCuadro);
   }
@@ -78,6 +84,29 @@ function fileFromUrl(imageUrl: string | null): string | null {
   if (!imageUrl) return null;
   const last = imageUrl.split("/").pop() ?? "";
   return last.split("?")[0] || null;
+}
+
+/**
+ * Oculta imágenes que el JSON referencia pero cuyo archivo no está en disco.
+ *
+ * Los uploads viven en `public/uploads/cuadros/` y están gitignorados, así que
+ * en un checkout limpio (o cuando OneDrive no los sincronizó) el JSON puede
+ * apuntar a archivos inexistentes. Sin esto, el museo pide esas URLs, recibe
+ * 404 y `useTexture` derriba toda la escena 3D.
+ *
+ * No reescribe el JSON: si el `.webp` vuelve a aparecer (re-sync),
+ * readCuadros vuelve a anunciarlo solo.
+ */
+async function resolveMissingUpload(record: Cuadro): Promise<Cuadro> {
+  if (!record.imageUrl) return record;
+  const filename = fileFromUrl(record.imageUrl);
+  if (!filename) return record;
+  try {
+    await fs.access(path.join(UPLOADS_DIR, filename));
+    return record;
+  } catch {
+    return { ...record, imageUrl: null };
+  }
 }
 
 async function safeUnlink(filepath: string): Promise<void> {

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Component, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Canvas, ThreeEvent, useThree } from "@react-three/fiber";
 import {
 	Html,
@@ -228,6 +228,30 @@ function applyTextureTo(material: Material | Material[], texture: Texture) {
 	}
 }
 
+/**
+ * `useTexture` (drei) lanza dentro del Suspense al fallar la carga de una
+ * textura (p. ej. 404). Sin este boundary, ese error derribaba toda la escena
+ * 3D. Atrapa el fallo y degrada esa pieza a "sin textura" en su lugar.
+ */
+class CuadroTextureErrorBoundary extends Component<
+	{ children: ReactNode },
+	{ failed: boolean }
+> {
+	state: { failed: boolean } = { failed: false };
+
+	static getDerivedStateFromError(): { failed: boolean } {
+		return { failed: true };
+	}
+
+	componentDidCatch(error: unknown) {
+		console.warn("CuadroTexture: no se pudo cargar la textura, se omite.", error);
+	}
+
+	render() {
+		return this.state.failed ? null : this.props.children;
+	}
+}
+
 function CuadroTexture({
 	name,
 	url,
@@ -252,19 +276,28 @@ function CuadroTexture({
 			const mesh = obj as Mesh;
 			if (mesh.isMesh) meshes.push(mesh);
 		});
+
+		// Material compartido: el GLB usa una MISMA instancia de material para
+		// varios cuadros (material[55] lo comparten cuadro_3, cuadro_4,
+		// cuadro_15..20 y cuadro_21). Mutar `.map` en ese material contagia la
+		// textura a todos los que la referencian. Clonamos el material por
+		// mesh para aislar la textura a este cuadro, y restauramos el original
+		// (descartando el clon) al desmontar.
+		const originalMaterials = meshes.map((m) => m.material);
+		for (const m of meshes) {
+			m.material = Array.isArray(m.material)
+				? m.material.map((mat) => mat.clone())
+				: m.material.clone();
+		}
 		for (const m of meshes) applyTextureTo(m.material, texture);
 
 		return () => {
-			for (const m of meshes) {
-				const list = Array.isArray(m.material) ? m.material : [m.material];
-				for (const mat of list) {
-					const standard = mat as MeshStandardMaterial;
-					if ("map" in standard && standard.map === texture) {
-						standard.map = null;
-						standard.needsUpdate = true;
-					}
-				}
-			}
+			meshes.forEach((m, i) => {
+				const cloned = m.material;
+				m.material = originalMaterials[i];
+				const list = Array.isArray(cloned) ? cloned : [cloned];
+				for (const mat of list) mat.dispose();
+			});
 		};
 	}, [texture, scene, name]);
 
@@ -390,12 +423,17 @@ function MuseumScene({
 		>
 			<primitive object={scene} dispose={null} />
 			{texturedCuadros.map((c) => (
-				<CuadroTexture
-					key={c.name}
-					name={c.name}
-					url={c.imageUrl as string}
-					scene={scene}
-				/>
+				// key por URL (no por name): si esta textura falló y luego se
+				// re-sube la imagen desde el admin (la URL cambia su ?v=), el
+				// boundary se reinicia y reintenta la carga nueva en lugar de
+				// quedar pegado en "fallado".
+				<CuadroTextureErrorBoundary key={c.imageUrl}>
+					<CuadroTexture
+						name={c.name}
+						url={c.imageUrl as string}
+						scene={scene}
+					/>
+				</CuadroTextureErrorBoundary>
 			))}
 		</group>
 	);

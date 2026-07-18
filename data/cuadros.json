@@ -1,12 +1,12 @@
 [
   {
     "name": "cuadro_1",
-    "imageUrl": "/uploads/cuadros/cuadro_1-451b371f98ba.webp?v=1784244475850",
+    "imageUrl": "/uploads/cuadros/cuadro_1-0c887901dcd9.webp?v=1784314089324",
     "description": "holaaaaa"
   },
   {
     "name": "cuadro_2",
-    "imageUrl": "/uploads/cuadros/cuadro_2-8e36adb1ed68.webp?v=1784307409384",
+    "imageUrl": null,
     "description": "jeje"
   },
   {
@@ -26,8 +26,8 @@
   },
   {
     "name": "cuadro_6",
-    "imageUrl": null,
-    "description": ""
+    "imageUrl": "/uploads/cuadros/cuadro_6-23b76c977639.webp?v=1784314897261",
+    "description": "ads"
   },
   {
     "name": "cuadro_7",
@@ -56,8 +56,8 @@
   },
   {
     "name": "cuadro_12",
-    "imageUrl": null,
-    "description": ""
+    "imageUrl": "/uploads/cuadros/cuadro_12-010bff7ea3fc.webp?v=1784314926739",
+    "description": "trs"
   },
   {
     "name": "cuadro_13",
@@ -101,17 +101,17 @@
   },
   {
     "name": "cuadro_21",
-    "imageUrl": null,
-    "description": ""
+    "imageUrl": "/uploads/cuadros/cuadro_21-4bac8ac370ad.webp?v=1784314108830",
+    "description": "jajaja"
   },
   {
     "name": "pintura",
-    "imageUrl": "/uploads/cuadros/pintura-c46d6ab15e26.webp?v=1784308610914",
+    "imageUrl": null,
     "description": "carnival"
   },
   {
     "name": "presentacion_1",
-    "imageUrl": "/uploads/cuadros/presentacion_1-2422a80ecdba.webp?v=1784308664660",
+    "imageUrl": null,
     "description": "jaja"
   },
   {
