@@ -4,9 +4,9 @@ import { revalidatePath } from "next/cache";
 
 import {
   deleteCuadroImage,
-  readCuadros,
+  getCuadroRow,
   saveCuadroImage,
-  writeCuadros,
+  upsertCuadro,
   CUADRO_LIMITS,
 } from "@/lib/cuadros";
 import { isManagedPanelName } from "@/types/cuadros";
@@ -39,15 +39,11 @@ export async function upsertCuadroAction(
   const file = formData.get("file");
   const wantsClear = formData.get("clearImage") === "1";
 
-  const records = await readCuadros();
-  const idx = records.findIndex(
-    (r) => r.name.toLowerCase() === name.toLowerCase(),
-  );
-  if (idx === -1) {
-    return { ok: false, message: "No se encontró la pieza" };
-  }
+  const row = await getCuadroRow(name);
+  const oldPublicId = row?.imagePublicId ?? null;
 
-  let imageUrl: string | null = records[idx].imageUrl;
+  let imageUrl: string | null = row?.imageUrl ?? null;
+  let imagePublicId: string | null = row?.imagePublicId ?? null;
 
   if (file instanceof File && file.size > 0) {
     if (file.type !== "image/webp") {
@@ -61,22 +57,30 @@ export async function upsertCuadroAction(
     }
     try {
       const buffer = new Uint8Array(await file.arrayBuffer());
-      imageUrl = await saveCuadroImage(name, buffer, file.type);
+      const uploaded = await saveCuadroImage(name, buffer, file.type);
+      imageUrl = uploaded.url;
+      imagePublicId = uploaded.publicId;
+      // La imagen anterior ya no se referencia: se borra de Cloudinary para no
+      // acumular huérfanos. Best-effort.
+      if (oldPublicId && oldPublicId !== imagePublicId) {
+        await deleteCuadroImage(oldPublicId);
+      }
     } catch (err) {
       const m = err instanceof Error ? err.message : "Error desconocido";
       return { ok: false, message: m };
     }
   } else if (wantsClear) {
-    await deleteCuadroImage(name);
+    if (oldPublicId) await deleteCuadroImage(oldPublicId);
     imageUrl = null;
+    imagePublicId = null;
   }
 
-  records[idx] = {
-    ...records[idx],
-    description: description.trim(),
-    imageUrl,
-  };
-  await writeCuadros(records);
+  try {
+    await upsertCuadro(name, { description: description.trim(), imageUrl, imagePublicId });
+  } catch (err) {
+    const m = err instanceof Error ? err.message : "Error al guardar";
+    return { ok: false, message: m };
+  }
 
   revalidatePath("/");
   revalidatePath("/museo");
@@ -95,17 +99,21 @@ export async function clearCuadroImageAction(
     return { ok: false, message: "Nombre de pieza inválido" };
   }
 
-  const records = await readCuadros();
-  const idx = records.findIndex(
-    (r) => r.name.toLowerCase() === name.toLowerCase(),
-  );
-  if (idx === -1) {
-    return { ok: false, message: "No se encontró la pieza" };
+  const row = await getCuadroRow(name);
+  if (row?.imagePublicId) {
+    await deleteCuadroImage(row.imagePublicId);
   }
 
-  await deleteCuadroImage(name);
-  records[idx] = { ...records[idx], imageUrl: null };
-  await writeCuadros(records);
+  try {
+    await upsertCuadro(name, {
+      description: row?.description ?? "",
+      imageUrl: null,
+      imagePublicId: null,
+    });
+  } catch (err) {
+    const m = err instanceof Error ? err.message : "Error al quitar la imagen";
+    return { ok: false, message: m };
+  }
 
   revalidatePath("/");
   revalidatePath("/museo");

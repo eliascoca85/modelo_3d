@@ -3,7 +3,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { findUserByUsername } from "@/lib/users";
+import { verifyCredentials } from "@/lib/users";
 
 const AUTH_COOKIE = "museo_admin_session";
 
@@ -18,8 +18,8 @@ export async function loginAction(
     return { ok: false, message: "Completá todos los campos" };
   }
 
-  const found = await findUserByUsername(user);
-  if (!found || found.password !== pass) {
+  const found = await verifyCredentials(user, pass);
+  if (!found) {
     return { ok: false, message: "Usuario o contraseña incorrectos" };
   }
 

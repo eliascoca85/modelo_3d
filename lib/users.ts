@@ -1,41 +1,111 @@
-import { promises as fs } from "fs";
-import path from "path";
+import crypto from "node:crypto";
+
+import { supabase } from "@/lib/supabase";
+
+// Usuarios del admin en Supabase + hashing de contraseñas con scrypt (nativo
+// de Node, sin dependencias).
+//
+// Antes esto leía/escribía data/users.json en el FS con contraseñas en plano;
+// ahora la tabla `users` guarda `password_hash` (scrypt + salt) y el servidor
+// nunca devuelve el hash al cliente. El tipo `User` ya no incluye `password`.
+// Local y Vercel comparten la misma DB.
 
 export type User = {
   id: string;
   username: string;
-  password: string;
   role: "admin" | "editor";
   createdAt: string;
 };
 
-type UsersStore = { users: User[] };
+// --- Hashing (scrypt) ----------------------------------------------------
 
-function getStorePath(): string {
-  return path.join(process.cwd(), "data", "users.json");
+function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16);
+  const hash = crypto.scryptSync(password, salt, 64);
+  return `${salt.toString("hex")}:${hash.toString("hex")}`;
 }
+
+function verifyPassword(password: string, stored: string): boolean {
+  const [saltHex, hashHex] = stored.split(":");
+  if (!saltHex || !hashHex) return false;
+  try {
+    const hash = Buffer.from(hashHex, "hex");
+    const test = crypto.scryptSync(password, Buffer.from(saltHex, "hex"), hash.length);
+    return crypto.timingSafeEqual(hash, test);
+  } catch {
+    return false;
+  }
+}
+
+// --- Mapeo fila DB -> User (sin password_hash) --------------------------
+
+function userFromDb(r: {
+  id: string;
+  username: string;
+  role: string;
+  created_at: string | null;
+}): User {
+  return {
+    id: r.id,
+    username: r.username,
+    role: r.role as "admin" | "editor",
+    createdAt: r.created_at ?? new Date(0).toISOString(),
+  };
+}
+
+const SELECT = "id, username, role, created_at";
+
+// --- Operaciones ---------------------------------------------------------
 
 export async function readUsers(): Promise<User[]> {
-  const filePath = getStorePath();
-  const data = await fs.readFile(filePath, "utf-8");
-  const store: UsersStore = JSON.parse(data);
-  return store.users;
-}
-
-export async function writeUsers(users: User[]): Promise<void> {
-  const filePath = getStorePath();
-  const store: UsersStore = { users };
-  await fs.writeFile(filePath, JSON.stringify(store, null, 2), "utf-8");
-}
-
-export async function findUserByUsername(username: string): Promise<User | null> {
-  const users = await readUsers();
-  return users.find((u) => u.username.toLowerCase() === username.toLowerCase()) ?? null;
+  const { data, error } = await supabase.from("users").select(SELECT);
+  if (error) throw error;
+  return (data ?? []).map(userFromDb);
 }
 
 export async function findUserById(id: string): Promise<User | null> {
-  const users = await readUsers();
-  return users.find((u) => u.id === id) ?? null;
+  const { data, error } = await supabase
+    .from("users")
+    .select(SELECT)
+    .eq("id", id)
+    .maybeSingle();
+  if (error || !data) return null;
+  return userFromDb(data);
+}
+
+export async function userExists(
+  username: string,
+  excludeId?: string,
+): Promise<boolean> {
+  let query = supabase
+    .from("users")
+    .select("id")
+    .ilike("username", username);
+  if (excludeId) {
+    query = query.neq("id", excludeId);
+  }
+  const { data, error } = await query.maybeSingle();
+  if (error) return false;
+  return Boolean(data);
+}
+
+/**
+ * Verifica credenciales para el login. Trae el password_hash de la DB y
+ * compara con scrypt. Devuelve el User (sin hash) si coincide, o null.
+ * Reemplaza al findUserByUsername + comparación en plano del login viejo.
+ */
+export async function verifyCredentials(
+  username: string,
+  password: string,
+): Promise<User | null> {
+  const { data, error } = await supabase
+    .from("users")
+    .select("id, username, role, created_at, password_hash")
+    .ilike("username", username)
+    .maybeSingle();
+  if (error || !data) return null;
+  if (!verifyPassword(password, data.password_hash)) return null;
+  return userFromDb(data);
 }
 
 export async function createUser(data: {
@@ -43,54 +113,55 @@ export async function createUser(data: {
   password: string;
   role: "admin" | "editor";
 }): Promise<User> {
-  const users = await readUsers();
-  const user: User = {
-    id: crypto.randomUUID(),
-    username: data.username.trim(),
-    password: data.password,
-    role: data.role,
-    createdAt: new Date().toISOString(),
-  };
-  users.push(user);
-  await writeUsers(users);
-  return user;
+  const username = data.username.trim();
+  const { data: row, error } = await supabase
+    .from("users")
+    .insert({
+      username,
+      password_hash: hashPassword(data.password),
+      role: data.role,
+    })
+    .select(SELECT)
+    .single();
+  if (error) {
+    // 23505 = unique_violation (username ya existe). El action ya lo valida
+    // antes con userExists, pero cubrimos la carrera por las dudas.
+    if (error.code === "23505") {
+      throw new Error("El nombre de usuario ya está en uso");
+    }
+    throw error;
+  }
+  return userFromDb(row);
 }
 
 export async function updateUser(
   id: string,
-  data: Partial<Omit<User, "id" | "createdAt">>,
+  data: Partial<Omit<User, "id" | "createdAt">> & { password?: string },
 ): Promise<User | null> {
-  const users = await readUsers();
-  const idx = users.findIndex((u) => u.id === id);
-  if (idx === -1) return null;
+  const patch: Record<string, string> = {};
+  if (data.username !== undefined) patch.username = data.username.trim();
+  if (data.password !== undefined) patch.password_hash = hashPassword(data.password);
+  if (data.role !== undefined) patch.role = data.role;
 
-  users[idx] = {
-    ...users[idx],
-    ...(data.username !== undefined && { username: data.username.trim() }),
-    ...(data.password !== undefined && { password: data.password }),
-    ...(data.role !== undefined && { role: data.role }),
-  };
-  await writeUsers(users);
-  return users[idx];
+  const { data: row, error } = await supabase
+    .from("users")
+    .update(patch)
+    .eq("id", id)
+    .select(SELECT)
+    .maybeSingle();
+  if (error) {
+    if (error.code === "23505") {
+      throw new Error("El nombre de usuario ya está en uso");
+    }
+    throw error;
+  }
+  return row ? userFromDb(row) : null;
 }
 
 export async function deleteUser(id: string): Promise<boolean> {
-  const users = await readUsers();
-  const idx = users.findIndex((u) => u.id === id);
-  if (idx === -1) return false;
-
-  users.splice(idx, 1);
-  await writeUsers(users);
+  const { error } = await supabase.from("users").delete().eq("id", id);
+  if (error) throw error;
   return true;
-}
-
-export async function userExists(username: string, excludeId?: string): Promise<boolean> {
-  const users = await readUsers();
-  return users.some(
-    (u) =>
-      u.username.toLowerCase() === username.toLowerCase() &&
-      (excludeId ? u.id !== excludeId : true),
-  );
 }
 
 export function validateUserData(data: {
