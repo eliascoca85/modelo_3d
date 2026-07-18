@@ -3,13 +3,14 @@
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { clearCuadroImageAction, upsertCuadroAction, type CuadroActionState } from "@/app/admin/cuadros/actions";
 import { cuadroDisplayName, type Cuadro } from "@/types/cuadros";
+import CuadroDropzone from "@/components/admin/dropzone";
 
 type Props = {
   cuadro: Cuadro;
   onClose: () => void;
-  onUpdated: (updated: Cuadro) => void;
 };
 
 const INITIAL_STATE: CuadroActionState = { ok: false };
@@ -40,32 +41,36 @@ function ClearButton() {
   );
 }
 
-export default function CuadroModal({ cuadro, onClose, onUpdated }: Props) {
+export default function CuadroModal({ cuadro, onClose }: Props) {
   const router = useRouter();
 
-  const [upsertState, upsertFormAction] = useActionState(
+  const [, upsertFormAction] = useActionState(
     async (
       prevState: CuadroActionState,
       formData: FormData,
     ): Promise<CuadroActionState> => {
       const result = await upsertCuadroAction(prevState, cuadro.name, formData);
       if (result.ok) {
-        onUpdated(cuadro);
+        toast.success(result.message ?? "Cambios guardados");
         router.refresh();
+        onClose();
+      } else {
+        toast.error(result.message ?? "No se pudo guardar el cuadro");
       }
       return result;
     },
     INITIAL_STATE,
   );
 
-  const [clearState, clearFormAction] = useActionState(
-    async (
-      prevState: CuadroActionState,
-    ): Promise<CuadroActionState> => {
+  const [, clearFormAction] = useActionState(
+    async (prevState: CuadroActionState): Promise<CuadroActionState> => {
       const result = await clearCuadroImageAction(prevState, cuadro.name);
       if (result.ok) {
-        onUpdated({ ...cuadro, imageUrl: null });
+        toast.success(result.message ?? "Imagen quitada");
         router.refresh();
+        onClose();
+      } else {
+        toast.error(result.message ?? "No se pudo quitar la imagen");
       }
       return result;
     },
@@ -75,6 +80,8 @@ export default function CuadroModal({ cuadro, onClose, onUpdated }: Props) {
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
   };
+
+  const displayName = cuadroDisplayName(cuadro.name);
 
   return (
     <div
@@ -89,7 +96,7 @@ export default function CuadroModal({ cuadro, onClose, onUpdated }: Props) {
               Editando
             </p>
             <h2 className="mt-0.5 text-xl font-semibold text-white">
-              {cuadroDisplayName(cuadro.name)}
+              {displayName}
             </h2>
           </div>
           <button
@@ -103,39 +110,11 @@ export default function CuadroModal({ cuadro, onClose, onUpdated }: Props) {
         </div>
 
         <div className="p-6">
-          {/* Preview */}
-          <div className="mb-5 aspect-video w-full overflow-hidden rounded-2xl border border-white/10 bg-slate-900/60">
-            {cuadro.imageUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={cuadro.imageUrl}
-                alt={cuadroDisplayName(cuadro.name)}
-                className="h-full w-full object-contain"
-              />
-            ) : (
-              <div className="flex h-full w-full flex-col items-center justify-center gap-2">
-                <svg className="h-8 w-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round"
-                    d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M18 3.75H6A2.25 2.25 0 003.75 6v12A2.25 2.25 0 006 20.25h12A2.25 2.25 0 0020.25 18V6A2.25 2.25 0 0018 3.75z" />
-                </svg>
-                <span className="text-xs text-white/30">Sin imagen subida</span>
-              </div>
-            )}
-          </div>
-
           {/* Upsert form */}
           <form action={upsertFormAction} className="flex flex-col gap-4">
-            <div>
-              <label className="mb-1.5 block text-[10px] uppercase tracking-[0.25em] text-slate-400">
-                Imagen WebP
-              </label>
-              <input
-                type="file"
-                name="file"
-                accept="image/webp"
-                className="block w-full text-xs text-white/80 file:mr-3 file:rounded-full file:border-0 file:bg-amber-300/90 file:px-3 file:py-2 file:text-xs file:font-medium file:text-slate-900 hover:file:bg-amber-200"
-              />
-            </div>
+            {/* El dropzone vive dentro del form: su <input name="file"> oculto
+                se sube con el submit del Server Action. */}
+            <CuadroDropzone currentUrl={cuadro.imageUrl} alt={displayName} />
 
             <div>
               <label className="mb-1.5 block text-[10px] uppercase tracking-[0.25em] text-slate-400">
@@ -150,21 +129,12 @@ export default function CuadroModal({ cuadro, onClose, onUpdated }: Props) {
               />
             </div>
 
-            {upsertState.message ? (
-              <p
-                role="status"
-                className={`text-xs ${upsertState.ok ? "text-emerald-300" : "text-rose-300"}`}
-              >
-                {upsertState.message}
-              </p>
-            ) : null}
-
             <div className="flex items-center gap-3 pt-1">
               <SubmitButton />
             </div>
           </form>
 
-          {/* Clear image form */}
+          {/* Clear image (form independiente: no manda el file input) */}
           {cuadro.imageUrl && (
             <form action={clearFormAction} className="mt-3">
               <ClearButton />

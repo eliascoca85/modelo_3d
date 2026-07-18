@@ -28,13 +28,6 @@ export default function CuadrosTable({ initialCuadros }: Props) {
     setData(initialCuadros);
   }, [initialCuadros]);
 
-  const refresh = (updated: Cuadro) => {
-    setData((prev) =>
-      prev.map((c) => (c.name === updated.name ? updated : c)),
-    );
-    setActiveCuadro(updated);
-  };
-
   const columns = [
     columnHelper.accessor("name", {
       header: "Pieza",
@@ -298,11 +291,7 @@ export default function CuadrosTable({ initialCuadros }: Props) {
       </div>
 
       {activeCuadro && (
-        <CuadroModal
-          cuadro={activeCuadro}
-          onClose={() => setActiveCuadro(null)}
-          onUpdated={refresh}
-        />
+        <CuadroModal cuadro={activeCuadro} onClose={() => setActiveCuadro(null)} />
       )}
     </>
   );

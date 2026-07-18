@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { createUserAction, updateUserAction, type UserActionState } from "@/app/admin/usuarios/actions";
 import type { User } from "@/lib/users";
 
@@ -32,20 +33,23 @@ export default function UserModal({ mode, user, onClose, onSuccess }: Props) {
   const router = useRouter();
   const isEdit = mode === "edit" && user;
 
-  const [state, formAction] = useActionState(
+  // `state` no se usa: las notificaciones las muestra Sonner (toast) y el
+  // modal se cierra con onSuccess(). Si el action falla, el toast de error
+  // queda visible sin cerrar el modal para que se pueda corregir.
+  const [, formAction] = useActionState(
     async (
       prevState: UserActionState,
       formData: FormData,
     ): Promise<UserActionState> => {
-      let result: UserActionState;
-      if (isEdit) {
-        result = await updateUserAction(prevState, formData);
-      } else {
-        result = await createUserAction(prevState, formData);
-      }
+      const result: UserActionState = isEdit
+        ? await updateUserAction(prevState, formData)
+        : await createUserAction(prevState, formData);
       if (result.ok) {
+        toast.success(result.message ?? (isEdit ? "Usuario actualizado" : "Usuario creado"));
         onSuccess();
         router.refresh();
+      } else {
+        toast.error(result.message ?? "No se pudo guardar el usuario");
       }
       return result;
     },
@@ -130,15 +134,6 @@ export default function UserModal({ mode, user, onClose, onSuccess }: Props) {
                 <option value="admin">Administrador</option>
               </select>
             </div>
-
-            {state.message ? (
-              <p
-                role="status"
-                className={`text-xs ${state.ok ? "text-emerald-300" : "text-rose-300"}`}
-              >
-                {state.message}
-              </p>
-            ) : null}
 
             <div className="flex items-center gap-3 pt-1">
               <SubmitButton label={isEdit ? "Actualizar" : "Crear usuario"} />

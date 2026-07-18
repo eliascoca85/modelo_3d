@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   useReactTable,
   getCoreRowModel,
@@ -11,7 +11,9 @@ import {
   createColumnHelper,
   type SortingState,
 } from "@tanstack/react-table";
-import { createUserAction, deleteUserAction, type UserActionState } from "@/app/admin/usuarios/actions";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { deleteUserAction } from "@/app/admin/usuarios/actions";
 import UserModal from "@/components/admin/user-modal";
 import type { User } from "@/lib/users";
 
@@ -20,12 +22,22 @@ const columnHelper = createColumnHelper<User>();
 type Props = { initialUsers: User[] };
 
 export default function UsersTable({ initialUsers }: Props) {
-  const [data] = useState<User[]>(initialUsers);
+  const router = useRouter();
+  const [data, setData] = useState<User[]>(initialUsers);
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
-  const [modalMode, setModalMode] = useState<"create" | "edit">("create");
+  // null = modal cerrado. Antes usábamos "create" por defecto + activeUser, lo
+  // que hacía que "Cancelar"/"X" en modo create no cerraran (activeUser ya era
+  // null y onClose no cambiaba nada). Ahora closeModal → modalMode null.
+  const [modalMode, setModalMode] = useState<"create" | "edit" | null>(null);
   const [activeUser, setActiveUser] = useState<User | null>(null);
-  const [deleteState, setDeleteState] = useState<UserActionState | null>(null);
+
+  // Sincroniza el state local cuando el server refresca los datos (tras un
+  // éxito, router.refresh() trae initialUsers nuevo y este efecto actualiza
+  // la tabla sin recargar la página entera).
+  useEffect(() => {
+    setData(initialUsers);
+  }, [initialUsers]);
 
   const openCreate = () => {
     setModalMode("create");
@@ -37,15 +49,21 @@ export default function UsersTable({ initialUsers }: Props) {
     setActiveUser(user);
   };
 
+  const closeModal = () => {
+    setModalMode(null);
+    setActiveUser(null);
+  };
+
   const handleDelete = async (user: User) => {
     const formData = new FormData();
     formData.set("id", user.id);
     const result = await deleteUserAction({ ok: false }, formData);
-    setDeleteState(result);
     if (result.ok) {
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
+      toast.success(result.message ?? "Usuario eliminado");
+      setData((prev) => prev.filter((u) => u.id !== user.id));
+      router.refresh();
+    } else {
+      toast.error(result.message ?? "No se pudo eliminar el usuario");
     }
   };
 
@@ -149,11 +167,6 @@ export default function UsersTable({ initialUsers }: Props) {
           </div>
 
           <div className="flex items-center gap-3">
-            {deleteState?.message && (
-              <p className={`text-xs ${deleteState.ok ? "text-emerald-300" : "text-rose-300"}`}>
-                {deleteState.message}
-              </p>
-            )}
             <button
               onClick={openCreate}
               className="flex items-center gap-2 rounded-2xl bg-amber-300 px-5 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-amber-200"
@@ -276,20 +289,16 @@ export default function UsersTable({ initialUsers }: Props) {
         )}
       </div>
 
-      {modalMode === "create" && !activeUser && (
-        <UserModal
-          mode="create"
-          onClose={() => setActiveUser(null)}
-          onSuccess={() => setActiveUser(null)}
-        />
+      {modalMode === "create" && (
+        <UserModal mode="create" onClose={closeModal} onSuccess={closeModal} />
       )}
 
       {modalMode === "edit" && activeUser && (
         <UserModal
           mode="edit"
           user={activeUser}
-          onClose={() => setActiveUser(null)}
-          onSuccess={() => setActiveUser(null)}
+          onClose={closeModal}
+          onSuccess={closeModal}
         />
       )}
     </>
