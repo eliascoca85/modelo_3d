@@ -112,6 +112,23 @@ export default function CuadroModal({ cuadro, onClose }: Props) {
         <div className="p-6">
           {/* Upsert form */}
           <form action={upsertFormAction} className="flex flex-col gap-4">
+            {/* Título mostrado en la tarjeta del museo. Opcional: si queda
+                vacío, la tarjeta muestra el nombre derivado (cuadroDisplayName),
+                así el admin no "renombra" la pieza, sólo el rótulo. */}
+            <div>
+              <label className="mb-1.5 block text-[10px] uppercase tracking-[0.25em] text-slate-400">
+                Título <span className="normal-case tracking-normal text-white/25">(opcional)</span>
+              </label>
+              <input
+                type="text"
+                name="title"
+                defaultValue={cuadro.title ?? ""}
+                maxLength={80}
+                placeholder="Ej.: Estela del sol · deja vacío para usar el nombre de la pieza"
+                className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder:text-white/25 transition focus:border-amber-300/40 focus:outline-none"
+              />
+            </div>
+
             {/* El dropzone vive dentro del form: su <input name="file"> oculto
                 se sube con el submit del Server Action. */}
             <CuadroDropzone currentUrl={cuadro.imageUrl} alt={displayName} />
