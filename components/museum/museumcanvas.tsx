@@ -21,6 +21,7 @@ import {
 } from "three";
 
 import { cuadroDisplayName, CUADRO_NAME_PATTERN, type Cuadro } from "@/types/cuadros";
+import FloatingMenu from "@/components/museum/floating-menu";
 
 const MODEL_URL = "/models/museo-compresion.glb";
 
@@ -666,6 +667,8 @@ function MuseumView({ cuadros }: { cuadros: Cuadro[] }) {
 					/>
 				</Canvas>
 			</div>
+
+			<FloatingMenu />
 
 			{selectedArtifact ? (
 				<div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-end p-4 sm:p-6 lg:p-8">
