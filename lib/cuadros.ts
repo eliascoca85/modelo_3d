@@ -28,6 +28,7 @@ export const CUADRO_LIMITS = { MAX_IMAGE_BYTES };
 /** Fila tal cual vive en la DB (incluye image_public_id). */
 export type CuadroRow = {
   name: string;
+  title: string | null;
   description: string;
   imageUrl: string | null;
   imagePublicId: string | null;
@@ -35,12 +36,14 @@ export type CuadroRow = {
 
 function rowFromDb(r: {
   name: string;
+  title: string | null;
   description: string | null;
   image_url: string | null;
   image_public_id: string | null;
 }): CuadroRow {
   return {
     name: r.name,
+    title: r.title,
     description: r.description ?? "",
     imageUrl: r.image_url,
     imagePublicId: r.image_public_id,
@@ -50,6 +53,7 @@ function rowFromDb(r: {
 function toCuadro(r: CuadroRow): Cuadro {
   return {
     name: r.name,
+    title: r.title,
     imageUrl: r.imageUrl,
     description: r.description,
   };
@@ -72,7 +76,7 @@ export async function readCuadros(): Promise<Cuadro[]> {
   try {
     const { data, error } = await supabase
       .from("cuadros")
-      .select("name, description, image_url, image_public_id");
+      .select("name, title, description, image_url, image_public_id");
     if (error) throw error;
     return mergeCanonical((data ?? []).map(rowFromDb));
   } catch {
@@ -85,7 +89,7 @@ export async function readCuadros(): Promise<Cuadro[]> {
 export async function getCuadroRow(name: string): Promise<CuadroRow | null> {
   const { data, error } = await supabase
     .from("cuadros")
-    .select("name, description, image_url, image_public_id")
+    .select("name, title, description, image_url, image_public_id")
     .eq("name", name.toLowerCase())
     .maybeSingle();
   if (error) return null;
@@ -93,6 +97,7 @@ export async function getCuadroRow(name: string): Promise<CuadroRow | null> {
 }
 
 type CuadroUpsert = {
+  title: string | null;
   description: string;
   imageUrl: string | null;
   imagePublicId: string | null;
@@ -107,6 +112,7 @@ export async function upsertCuadro(
     .upsert(
       {
         name: name.toLowerCase(),
+        title: patch.title,
         description: patch.description,
         image_url: patch.imageUrl,
         image_public_id: patch.imagePublicId,

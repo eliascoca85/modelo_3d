@@ -1,5 +1,6 @@
 export type Cuadro = {
   name: string;
+  title: string | null;
   imageUrl: string | null;
   description: string;
 };
@@ -33,7 +34,7 @@ export function isManagedPanelName(name: string): boolean {
 }
 
 export function emptyCuadro(name: string): Cuadro {
-  return { name: name.toLowerCase(), imageUrl: null, description: "" };
+  return { name: name.toLowerCase(), title: null, imageUrl: null, description: "" };
 }
 
 export function cuadroDisplayName(name: string): string {

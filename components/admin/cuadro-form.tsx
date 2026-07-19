@@ -100,7 +100,18 @@ export default function CuadroForm({ cuadro }: Props) {
         />
 
         <label className="text-[10px] uppercase tracking-[0.3em] text-white/50">
-          Descripción (tarjeta lateral al hacer clic)
+          Titulo (mostrado en la tarjeta)
+        </label>
+        <input
+          type="text"
+          name="title"
+          defaultValue={cuadro.title ?? ""}
+          placeholder="Ej: La Creacion..."
+          className="w-full rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30 focus:border-amber-200/40"
+        />
+
+        <label className="text-[10px] uppercase tracking-[0.3em] text-white/50">
+          Descripcion (tarjeta lateral al hacer clic)
        </label>
         <textarea
           name="description"

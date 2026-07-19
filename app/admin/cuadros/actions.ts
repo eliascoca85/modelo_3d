@@ -36,6 +36,7 @@ export async function upsertCuadroAction(
   }
 
   const description = String(formData.get("description") ?? "");
+  const rawTitle = String(formData.get("title") ?? "");
   const file = formData.get("file");
   const wantsClear = formData.get("clearImage") === "1";
 
@@ -76,7 +77,7 @@ export async function upsertCuadroAction(
   }
 
   try {
-    await upsertCuadro(name, { description: description.trim(), imageUrl, imagePublicId });
+    await upsertCuadro(name, { title: rawTitle.trim() || null, description: description.trim(), imageUrl, imagePublicId });
   } catch (err) {
     const m = err instanceof Error ? err.message : "Error al guardar";
     return { ok: false, message: m };
@@ -106,6 +107,7 @@ export async function clearCuadroImageAction(
 
   try {
     await upsertCuadro(name, {
+      title: row?.title ?? null,
       description: row?.description ?? "",
       imageUrl: null,
       imagePublicId: null,

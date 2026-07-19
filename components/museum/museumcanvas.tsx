@@ -27,6 +27,7 @@ const MODEL_URL = "/models/museo-compresion.glb";
 type SelectedArtifact = {
 	name: string;
 	label: string;
+	title: string | null;
 	description: string;
 	isMonolith: boolean;
 	isChachapuma: boolean;
@@ -42,7 +43,6 @@ type SelectedArtifact = {
 type MuseumSceneProps = {
 	cuadros: Cuadro[];
 	onSelectArtifact: (artifact: SelectedArtifact) => void;
-	onTargetsDetected: (targets: string[]) => void;
 };
 
 function resolveObjectLabel(object: Object3D | null): string {
@@ -171,11 +171,13 @@ function buildArtifactDetails(
 	const isInteractive = isMonolith || isChachapuma || isFuente || isPintura || isPresentacion || isNode || isCuadro;
 
 	let label = normalizedName;
+	let title: string | null = null;
 	let description = "Pieza interactiva detectada en la escena exportada desde Blender.";
 
 	if (isCuadro || isPintura || isPresentacion) {
 		const record = cuadrosMap.get(normalizedName.toLowerCase());
 		label = cuadroDisplayName(normalizedName);
+		title = record?.title?.trim() || null;
 		description =
 			record?.description?.trim() ||
 			"Esta pieza aún no tiene una descripción cargada desde la administración.";
@@ -204,6 +206,7 @@ function buildArtifactDetails(
 	return {
 		name: normalizedName,
 		label,
+		title,
 		description,
 		isMonolith,
 		isChachapuma,
@@ -307,7 +310,6 @@ function CuadroTexture({
 function MuseumScene({
 	cuadros,
 	onSelectArtifact,
-	onTargetsDetected,
 }: MuseumSceneProps) {
 	const { scene } = useGLTF(MODEL_URL, true, true);
 
@@ -340,30 +342,16 @@ function MuseumScene({
 		};
 	}, [scene]);
 
-	const detectedTargets = useMemo(() => {
-		const targets = new Set<string>();
-
+	// Activar sombras en todas las mallas de la escena exportada desde Blender.
+	useMemo(() => {
 		scene.traverse((child) => {
 			if ((child as Mesh).isMesh) {
 				const mesh = child as Mesh;
-
 				mesh.castShadow = true;
 				mesh.receiveShadow = true;
-
-				const resolvedLabel = resolveObjectLabel(mesh);
-
-				if (resolvedLabel && resolvedLabel !== "pieza sin nombre") {
-					targets.add(resolvedLabel);
-				}
 			}
 		});
-
-		return Array.from(targets);
 	}, [scene]);
-
-	useEffect(() => {
-		onTargetsDetected(detectedTargets);
-	}, [detectedTargets, onTargetsDetected]);
 
 	useEffect(() => {
 		if (typeof document === "undefined") {
@@ -465,15 +453,9 @@ function CameraLight() {
 
 function MuseumView({ cuadros }: { cuadros: Cuadro[] }) {
 	const [selectedArtifact, setSelectedArtifact] = useState<SelectedArtifact | null>(null);
-	const [availableTargets, setAvailableTargets] = useState<string[]>([]);
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const controlsRef = useRef<any>(null);
 	const animationFrameIdRef = useRef<number | null>(null);
-
-	const monolithTarget = useMemo(
-		() => availableTargets.find((target) => /monolito/i.test(target)) ?? null,
-		[availableTargets],
-	);
 
 	// Animar cámara y target suavemente cuando se abre o se cierra la tarjeta
 	useEffect(() => {
@@ -670,7 +652,6 @@ function MuseumView({ cuadros }: { cuadros: Cuadro[] }) {
 						<MuseumScene
 							cuadros={cuadros}
 							onSelectArtifact={setSelectedArtifact}
-							onTargetsDetected={setAvailableTargets}
 						/>
 					</Suspense>
 
@@ -692,7 +673,7 @@ function MuseumView({ cuadros }: { cuadros: Cuadro[] }) {
 						<div className="flex items-start justify-between gap-4">
 							<div>
 								<p className="text-xs uppercase tracking-[0.3em] text-amber-100/75">Objeto detectado</p>
-								<h2 className="mt-2 text-2xl font-semibold text-white">{selectedArtifact.label}</h2>
+								<h2 className="mt-2 text-2xl font-semibold text-white">{selectedArtifact.title ?? selectedArtifact.label}</h2>
 							</div>
 							<button
 								type="button"
@@ -714,9 +695,6 @@ function MuseumView({ cuadros }: { cuadros: Cuadro[] }) {
 							{selectedArtifact.isFuente && (
 								<span className="rounded-full border border-blue-200/20 bg-blue-200/10 px-3 py-1 text-blue-50">Fuente</span>
 							)}
-							{monolithTarget ? (
-								<span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">Monolito disponible</span>
-							) : null}
 						</div>
 					</div>
 				</div>
