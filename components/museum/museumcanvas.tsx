@@ -51,15 +51,6 @@ type SelectedArtifact = {
 	cameraPosition?: Vector3;
 	/** Target explícito al que mira la cámara; va junto a `cameraPosition`. */
 	cameraTarget?: Vector3;
-	/**
-	 * Si está activo, la cámara describe una trayectoria "lift-and-glide" con los
-	 * ejes desacoplados: la altitud sube rápido (ease-out cubic) y alcanza su
-	 * tope en ~62% de la duración, mientras el plano X/Z sigue el ease-in-out
-	 * cosenoidal del lerp normal. Pensado para transiciones a vistas superiores /
-	 * cenitales: la cámara sube, sobrevuela y aterriza sobre el destino,
-	 * evitando el lerp lineal que cortaría diagonalmente la escena.
-	 */
-	useArcPath?: boolean;
 };
 
 type MuseumSceneProps = {
@@ -606,106 +597,85 @@ function buildFrontalWallArtifact(
 }
 
 /**
- * Busca un objeto en la escena por nombre, tolerante a variaciones de cómo el
- * GLB haya quedado exportado: prueba primero coincidencia exacta (con y sin
- * espacios), y si no aparece, busca por substring del nombre. Devuelve el
- * primero que aparezca, ordenado por profundidad (objetos antes que sus hijos)
- * para quedarse con el contenedor y no con un mesh interno acaso. Útil para
- * piezas que NO son cuadros (no tienen fila en cuadros.json) — p. ej. un
- * pedestal de presentación — cuyo nombre en Blender no está normalizado.
- */
-function findSceneObjectByName(scene: Object3D, name: string): Object3D | null {
-	const trimmed = name.trim().toLowerCase();
-	if (!trimmed) return null;
-
-	// 1) Coincidencia exacta (case/space-insensitive).
-	const exact = scene.getObjectByName(name) ?? scene.getObjectByName(trimmed);
-	if (exact) return exact;
-
-	// 2) Substring del nombre: recorre primero los padres (objetos antes que
-	// meshes internos) para quedarnos con el agrupador.
-	let candidate: Object3D | null = null;
-	scene.traverse((obj) => {
-		const n = obj.name.trim().toLowerCase();
-		if (n && n.includes(trimmed) && !candidate) {
-			candidate = obj;
-		}
-	});
-	return candidate;
-}
-
-/**
- * Movimiento para la sección "Historia": encara `pedestal_presentacion` (o el
- * objeto que se pase) DESDE ARRIBA (vista cenital / superior). La cámara se
- * planta sobre el eje vertical del objeto, por encima de su techo, mirándolo
- * de arriba a abajo. Pensado para piezas que NO son muros sino elementos
- * puntuales del escenario (un pedestal, una vitrina) que se leen mejor desde
- * una vista superior que frontales.
+ * Movimiento INDEPENDIENTE para la sección "Historia" (pedestal_presentacion).
+ * A diferencia de los constructores de pared —que encuadran un muro de frente
+ * o en 3/4— éste planta la cámara ARRIBA del pedestal y mira HACIA ABAJO con
+ * una leve inclinación (no 100% vertical), para apreciar la pieza en planta
+ * cenital. Es el único target del menú con vista top-down.
  *
- * posicionamiento:
- *   - target  = centro de la BoundingBox del objeto, ligeramente elevado.
- *   - cámara  = mismo (x,z) del target, e Y muy por encima del techo del
- *     objeto (fija por FOV para que el objeto entre completo en el cuadro + un
- *     margen) → mirada puramente hacia abajo (-Y), sin yaw → vista superior.
+ * El `cameraTarget` se posiciona en el centro de la cara superior del pedestal
+ * (la "superficie de presentación"). La distancia se ajusta al lado menor de
+ * la planta (X/Z) para que esa cara entre completa en el FOV. La cámara queda
+ * casi encima (predomina el offset en Z, apenas en X) con un ligero ángulo
+ * desde la vertical para que la escena se lea en perspectiva y se mantenga
+ * dentro del maxPolarAngle (~100.8°) de OrbitControls.
  */
-function buildTopDownArtifact(scene: Object3D, objectName: string, cameraFov: number): SelectedArtifact | null {
-	const targetObj = findSceneObjectByName(scene, objectName);
-	if (!targetObj) return null;
+function buildPedestalPresentacionArtifact(
+	scene: Object3D,
+	cameraFov: number,
+): SelectedArtifact | null {
+	const pedestalObj = scene.getObjectByName("pedestal_presentacion");
+	if (!pedestalObj) return null;
 
-	const box = new Box3().setFromObject(targetObj);
-	const center = new Vector3();
-	box.getCenter(center);
+	const pedestalBox = new Box3().setFromObject(pedestalObj);
+	const pedestalCenter = new Vector3();
+	pedestalBox.getCenter(pedestalCenter);
 	const size = new Vector3();
-	box.getSize(size);
+	pedestalBox.getSize(size);
 
-	// Punto de enfoque: centro de la pieza, subido una fracción de su altura
-	// para que la cámara mire ligeramente "adentro" del tope y no al vacío
-	// por encima del pedestal. >0 = hacia el borde superior de la caja.
-	const FOCUS_TOP_BIAS = 0.35;
-	const focusPoint = center.clone();
-	focusPoint.y = box.min.y + size.y * FOCUS_TOP_BIAS;
+	// Punto de enfoque: centro de la cara superior del pedestal (un pelo por
+	// debajo del borde max para asentarse sobre la superficie de presentación).
+	const targetPoint = new Vector3(
+		pedestalCenter.x,
+		pedestalBox.max.y - 0.02,
+		pedestalCenter.z,
+	);
 
-	// Distancia cámara-target para que la pieza entre en el FOV. El máximo entre
-	// ancho y profundo (la "huella" mayor) domina en planta al ver de arriba.
+	// Distancia para encuadrar la cara superior (la más chica de X/Z) y dejar
+	// margen para no rebotar contra el techo (maxDistance 13) ni el piso
+	// (minDistance 0.3) de OrbitControls.
 	const halfFov = ((cameraFov || 31) * Math.PI) / 180 / 2;
-	const footprintRadius = Math.max(size.x, size.z) / 2;
-	const fitDistance = footprintRadius / Math.tan(halfFov);
+	const topFace = Math.min(size.x, size.z) || Math.max(size.x, size.z) || 1;
+	const fitDistance = topFace / (2 * Math.tan(halfFov));
+	const distance = Math.max(Math.min(fitDistance * 1.05, 6), 1.2);
 
-	// ZOOM más CERCANO: factor 0.9 (era 1.6, que iba cenital y dejaba mucho
-	// espacio alrededor) → la pieza ocupa más del cuadro; admitimos un recorte
-	// leve en las esquinas de la huella si la pieza es grande. La distancia
-	// resultante queda por encima del minDistance (0.3) de OrbitControls.
-	const viewDistance = fitDistance * 0.9;
+	// Cámara ARRIBA del pedestal con una leve inclinación hacia adelante para
+	// que la escena se lea en perspectiva (no totalmente vertical).
+	// TOP_DOWN_PITCH_RAD es el ángulo DESDE la vertical (0 = cenital puro).
+	// El polar resultante queda dentro del maxPolarAngle de OrbitControls
+	// (~100.8°) para que no se autocorra al final del vuelo.
+	const TOP_DOWN_PITCH_RAD = 0.3; // ~17° desde la vertical → polar ~73°
 
-	// POSE CENITAL: la cámara se planta sobre el eje vertical del target, por
-	// encima del tope, mirando recto hacia abajo (sin yaw ni inclinación). Es el
-	// ángulo que se veía mejor antes de añadir la inclinación. La altura = el
-	// `viewDistance` completo, sin repartir en altura/empuje lateral. Al mirar
-	// en vertical, el ancho del objeto llena el cuadro según `fitDistance`.
-	const heightAboveTop = Math.max(viewDistance - (box.max.y - focusPoint.y), 0.3);
+	const horizOffset = distance * Math.sin(TOP_DOWN_PITCH_RAD);
+	const verticalOffset = distance * Math.cos(TOP_DOWN_PITCH_RAD);
+
+	// Reparto: 0% lateral (X) + 95% adelante/atrás (Z). Sin offset lateral la
+	// cámara queda alineada con el eje vertical del pedestal — no se va ni a
+	// la izquierda ni a la derecha del target. Se conserva el pequeño offset
+	// en Z para que la escena se lea en perspectiva y no sea un picado
+	// totalmente vertical (que perdería profundidad).
 	const cameraPosition = new Vector3(
-		focusPoint.x,
-		box.max.y + heightAboveTop,
-		focusPoint.z,
+		targetPoint.x,
+		targetPoint.y + verticalOffset,
+		targetPoint.z + horizOffset * 0.95,
 	);
 
 	return {
-		name: objectName,
+		name: "pedestal_presentacion",
 		label: "Sección · Historia",
-		title: "Sala de Historia",
+		title: "Galería de Historia",
 		description:
-			"Vista superior del pedestal de presentación, donde se exponen los hitos y testimonios históricos de la colección.",
+			"Vista cenital del pedestal de presentación. Observa la pieza desde arriba para apreciar la disposición y los detalles de su superficie.",
 		isMonolith: false,
 		isChachapuma: false,
 		isFuente: false,
 		isInteractive: true,
 		isCuadro: false,
-		position: focusPoint.clone(),
-		lookDirection: new Vector3(0, -1, 0),
+		position: targetPoint.clone(),
+		lookDirection: targetPoint.clone().sub(cameraPosition).normalize(),
 		showPanel: false,
-		useArcPath: true,
 		cameraPosition,
-		cameraTarget: focusPoint.clone(),
+		cameraTarget: targetPoint.clone(),
 	};
 }
 
@@ -966,23 +936,33 @@ function MuseumView({ cuadros }: { cuadros: Cuadro[] }) {
 	// cámara frente a esa pared, sin abrir la tarjeta de "Objeto detectado".
 	const handleSelectSection = useCallback((sectionId: string, wallName: string) => {
 		const scene = sceneRef.current;
-		if (!scene) return;
+		if (!scene) {
+			// Sin escena aún: igual dejamos el resaltado como feedback visual.
+			setActiveSection(sectionId);
+			return;
+		}
 
 		// FOV de la cámara activa, con fallback al de la Canvas.
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const fov = (controlsRef.current?.object?.fov as number | undefined) ?? 31;
+
 		// Cada sección con `wall` usa su movimiento propio:
-		//   - "historia"        → vista cenital/superior del pedestal de
-		//                         presentación (no es un muro).
-		//   - "fiestas"/"independencia" → vista frontal de una cara de pared_6.
-		//   - "lugares"         → encuadre en 3/4 de pared_1 (buildWallArtifact).
-		const artifact =
-			sectionId === "historia"
-				? buildTopDownArtifact(scene, wallName, fov)
-				: sectionId === "fiestas" || sectionId === "independencia"
-					? buildFrontalWallArtifact(scene, wallName, fov, sectionId)
-					: buildWallArtifact(scene, wallName, fov);
-		if (!artifact) return;
+		//   - "historia"                 → vista CENITAL del pedestal_presentacion.
+		//   - "fiestas"/"independencia"  → vista frontal de una cara de pared_6.
+		//   - las demás (p. ej. "lugares") → encuadre en 3/4 de la pared (buildWallArtifact).
+		let artifact: SelectedArtifact | null;
+		if (sectionId === "historia") {
+			artifact = buildPedestalPresentacionArtifact(scene, fov);
+		} else if (sectionId === "fiestas" || sectionId === "independencia") {
+			artifact = buildFrontalWallArtifact(scene, wallName, fov, sectionId);
+		} else {
+			artifact = buildWallArtifact(scene, wallName, fov);
+		}
+		if (!artifact) {
+			// El objeto destino no existe en la escena: dejamos el feedback
+			// visual sin disparar la animación de cámara.
+			setActiveSection(sectionId);
+			return;
+		}
 
 		setActiveSection(sectionId);
 		setSelectedArtifact(artifact);
@@ -1099,13 +1079,8 @@ function MuseumView({ cuadros }: { cuadros: Cuadro[] }) {
 			finalPosition = new Vector3(-7, 1.3, 7.5);
 		}
 
-		// Trayectoria "lift-and-glide" para vistas superiores: la cámara sube
-		// rápido (ease-out cubic, clip a 0..1) mientras X/Z siguen el ease-in-out
-		// cosenoidal normal. Evita el lerp diagonal que cortaba el volumen de la
-		// sala, sin sobrevolar por encima del techo. Solo se activa cuando el
-		// artefacto lo pide (`useArcPath`).
-		const arcUseArc = Boolean(selectedArtifact?.useArcPath);
-
+		// Animar cámara (posición + target) hasta su pose final con un ease-in-out
+		// cosenoidal suave a lo largo de `duration`.
 		// Si ya está prácticamente en el destino, no es necesario animar
 		if (startPosition.distanceTo(finalPosition) < 0.001 && startTarget.distanceTo(finalTarget) < 0.001) {
 			return;
@@ -1124,25 +1099,9 @@ function MuseumView({ cuadros }: { cuadros: Cuadro[] }) {
 			const elapsed = currentTime - startTime;
 			const progress = Math.min(elapsed / duration, 1);
 
-			// Ease-in-out suave (sin frenazo brusco al final)
+			// Ease-in-out cosenoidal suave (sin frenazo brusco al final)
 			const eased = 0.5 - 0.5 * Math.cos(progress * Math.PI);
-
-			if (arcUseArc) {
-				// Lift-and-glide: la altitud sube rápido con ease-out cubic y
-				// llega al tope en ~62% del tiempo; X/Z siguen el ease-in-out
-				// cosenoidal. La cámara describe un arco natural en "L" — sube,
-				// sobrevuela y aterriza sobre el destino — sin sobrevolar el techo.
-				// altP se acelera 1.6× respecto a `progress` y se clipea a [0, 1].
-				const altP = Math.min(progress * 1.6, 1);
-				const easedY = 1 - Math.pow(1 - altP, 3);
-				controls.object.position.set(
-					startPosition.x + (finalPosition.x - startPosition.x) * eased,
-					startPosition.y + (finalPosition.y - startPosition.y) * easedY,
-					startPosition.z + (finalPosition.z - startPosition.z) * eased,
-				);
-			} else {
-				controls.object.position.lerpVectors(startPosition, finalPosition, eased);
-			}
+			controls.object.position.lerpVectors(startPosition, finalPosition, eased);
 			controls.target.lerpVectors(startTarget, finalTarget, eased);
 			controls.update();
 
