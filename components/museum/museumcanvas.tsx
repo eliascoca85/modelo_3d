@@ -15,6 +15,7 @@ import {
 	Mesh,
 	MeshStandardMaterial,
 	Object3D,
+	Raycaster,
 	SRGBColorSpace,
 	Texture,
 	Vector3,
@@ -440,6 +441,55 @@ function computeWallNormalAxis(wallObj: Object3D): Vector3 {
 }
 
 /**
+ * Ancestro nombrado más alto de `obj` (sube hasta la raíz de la escena omitiendo
+ * el nodo "scene"). Recorre la jerarquía como `resolveObjectLabel`/`findNamedObject`
+ * pero devuelve el Object3D en lugar del nombre.
+ */
+function findRootNamedObject(obj: Object3D | null): Object3D | null {
+	let last: Object3D | null = null;
+	let current: Object3D | null = obj;
+	while (current) {
+		if (current.name && current.name.trim().toLowerCase() !== "scene") {
+			last = current;
+		}
+		current = current.parent;
+	}
+	return last;
+}
+
+/**
+ * Distancia (en mundo, desde `origin`) al primer muro-partición que se interpone
+ * entre el punto de enfoque de la pared y donde se plantaría la cámara, mirando a
+ * lo largo de `direction` (apunta DESDE la pared hacia afuera, donde va la cámara).
+ * Solo cuenta otros `pared_*` como ocludores: los cuadros y esculturas cuelgan de
+ * la propia cara y son contenido, no estorban. Devuelve `null` si el camino está
+ * despejado (espacio abierto). `maxDist` acota la prueba del rayo.
+ *
+ * Evita plantar la cámara DETRÁS de un muro intermedio (p. ej. pared_2 frente a la
+ * cara INTERIOR de pared_6 en "Independencia"): ahí el ocluder llena el encuadre y
+ * absorbe todos los clics, así que cualquier objeto resolvía a esa pared en lugar
+ * de a la galería que se quería ver.
+ */
+function nearestWallOccluder(
+	scene: Object3D,
+	wallObj: Object3D,
+	origin: Vector3,
+	direction: Vector3,
+	maxDist: number,
+): number | null {
+	scene.updateWorldMatrix(true, true);
+	const ray = new Raycaster(origin.clone(), direction.clone().normalize(), 0, maxDist + 1);
+	const hits = ray.intersectObject(scene, true);
+	for (const hit of hits) {
+		const root = findRootNamedObject(hit.object);
+		if (!root || root === wallObj) continue;
+		if (!/^pared/i.test(root.name)) continue;
+		return hit.distance;
+	}
+	return null;
+}
+
+/**
  * Movimiento INDEPENDIENTE para la sección "Fiestas" (pared_6). A diferencia de
  * `buildWallArtifact` —que encuadra la pared en un leve 3/4 (con yaw y mirada
  * picada)— éste planta la cámara DE FRENTE a la cara frontal del muro:
@@ -552,7 +602,7 @@ function buildFrontalWallArtifact(
 	const halfFov = ((cameraFov || 31) * Math.PI) / 180 / 2;
 	const fitMaxFace = Math.max(halfWidth, wallHeight);
 	const fitDistance = fitMaxFace / (2 * Math.tan(halfFov));
-	const distance = Math.max(Math.min(fitDistance * 0.6, 5), 0.45);
+	let distance = Math.max(Math.min(fitDistance * 0.6, 5), 0.45);
 
 	// Desplazamiento lateral a la DERECHA del espectador a lo largo del eje
 	// tangencial del muro, PRESERVANDO la frontalidad y el alto: arrastramos
@@ -565,6 +615,19 @@ function buildFrontalWallArtifact(
 	// negamos para mover la cámara hacia su derecha.
 	const lateralOffset = wallTangent.clone().multiplyScalar(-LATERAL_SHIFT * halfWidth);
 	const focusPointShifted = focusPoint.clone().add(lateralOffset);
+
+	// Si entre el punto de enfoque y donde iría la cámara hay otro muro (p. ej.
+	// pared_2 frente a la cara INTERIOR de pared_6 en "Independencia"), ese
+	// ocluder llena el encuadre y absorbe todos los clics → cualquier objeto
+	// resolvía a esa pared en vez de a la galería. Acercamos la cámara para que
+	// quede ANTES del ocluder (entre la cara y el muro intermedio), manteniendo
+	// la galería como lo primero clickable. Solo cuentan otros `pared_*`:
+	// cuadros y esculturas cuelgan de la cara y son contenido, no estorban.
+	// Fiestas (cara EXTERIOR, espacio abierto) sin ocluder → distancia intacta.
+	const occluder = nearestWallOccluder(scene, wallObj, focusPointShifted, intoRoom, distance);
+	if (occluder != null) {
+		distance = Math.max(Math.min(distance, occluder * 0.85), 0.45);
+	}
 
 	// Cámara perpendicular a la pared (sin yaw → vista FRONTAL pura) y algo MÁS
 	// ALTA que el target (CAMERA_LIFT) → leve mirada picada que encuadra el muro
