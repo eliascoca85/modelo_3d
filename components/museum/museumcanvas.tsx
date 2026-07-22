@@ -22,6 +22,7 @@ import {
 
 import { cuadroDisplayName, CUADRO_NAME_PATTERN, type Cuadro } from "@/types/cuadros";
 import FloatingMenu from "@/components/museum/floating-menu";
+import { FiPlay, FiPause, FiX } from "react-icons/fi";
 
 const MODEL_URL = "/models/museo-compresion.glb";
 
@@ -679,6 +680,101 @@ function buildPedestalPresentacionArtifact(
 	};
 }
 
+/**
+ * Movimiento INDEPENDIENTE para la sección "Comidas" — encuadra la
+ * INTERSECCIÓN de `pared_1` y `pared_3`, es decir, la esquina donde ambas
+ * paredes se encuentran. A diferencia de las paredes individuales (vista
+ * frontal o 3/4 sobre UNA pared) o del pedestal (vista cenital sobre UN
+ * objeto), aquí el target se posa en el centro de la región COMPARTIDA entre
+ * las dos cajas y la cámara se planta DENTRO de la sala mirando al vértice
+ * desde la diagonal interior: se ven las dos paredes abriéndose en ángulo
+ * desde sus planos convergentes.
+ *
+ * El "centro de la intersección" se calcula como el centro de la región
+ * solapada de las dos BoundingBox. Funciona cuando las paredes se solapan
+ * por su grosor (lo habitual al exportar muros con espesor desde Blender),
+ * y colapsa al punto medio de la arista compartida si solo se tocan en el
+ * límite. En ambos casos queda sobre la línea de encuentro.
+ */
+function buildComidasIntersectionArtifact(scene: Object3D, cameraFov: number): SelectedArtifact | null {
+	const wall1 = scene.getObjectByName("pared_1");
+	const wall3 = scene.getObjectByName("pared_3");
+	if (!wall1 || !wall3) return null;
+
+	const box1 = new Box3().setFromObject(wall1);
+	const box3 = new Box3().setFromObject(wall3);
+
+	const roomCenter = new Vector3();
+	new Box3().setFromObject(scene).getCenter(roomCenter);
+
+	// Centro de la región compartida entre las dos cajas → centro de la
+	// intersección (mitad de la arista compartida o mitad del solape de grosor).
+	const intersectionCenter = new Vector3(
+		(Math.max(box1.min.x, box3.min.x) + Math.min(box1.max.x, box3.max.x)) / 2,
+		(Math.max(box1.min.y, box3.min.y) + Math.min(box1.max.y, box3.max.y)) / 2,
+		(Math.max(box1.min.z, box3.min.z) + Math.min(box1.max.z, box3.max.z)) / 2,
+	);
+
+	// Dirección desde la esquina hacia el INTERIOR de la sala (en planta).
+	// Si el vector quedara casi nulo (corner exactamente en el centro geométrico
+	// escenario), fallback a +X para no degenerar.
+	const intoRoom = roomCenter.clone().sub(intersectionCenter);
+	intoRoom.y = 0;
+	if (intoRoom.lengthSq() < 1e-6) intoRoom.set(1, 0, 0);
+	else intoRoom.normalize();
+
+	// Distancia para encuadrar la pared más larga al borde del FOV. Factor bajo
+	// (0.28) ⇒ encuadre MUY ceñido: la cámara se planta cerca de la esquina y
+	// solo ella y un tramo corto de cada pared entran en cuadro. Mismo techo que
+	// los otros constructores para no atravesar paredes ni entrar en la niebla.
+	const wallLen1 = Math.max(box1.max.x - box1.min.x, box1.max.z - box1.min.z);
+	const wallLen3 = Math.max(box3.max.x - box3.min.x, box3.max.z - box3.min.z);
+	const fitSpan = Math.max(wallLen1, wallLen3);
+	const halfFov = ((cameraFov || 31) * Math.PI) / 180 / 2;
+	const fitDistance = fitSpan / (2 * Math.tan(halfFov));
+	const distance = Math.max(Math.min(fitDistance * 0.39, 5), 0.55);
+
+	// Cámara DENTRO de la sala, mirando a la esquina, elevada sobre el target
+	// para una vista MÁS ALTA y desplazada levemente a la IZQUIERDA del
+	// espectador. La dirección "izquierda" se calcula perpendicular a `intoRoom`
+	// en la planta (cross con up) — es el eje local-izquierda de la cámara:
+	// shiftar la cámara en ese eje mueve al observador a su propia izquierda
+	// mientras el enfoque sigue siendo la esquina (cameraTarget sin tocar).
+	// Se escala con `distance` para que el desplazamiento lateral guarde la
+	// misma proporción visual al cambiar el zoom.
+	const cameraLeft = intoRoom.clone().cross(new Vector3(0, 1, 0));
+	if (cameraLeft.lengthSq() < 1e-8) cameraLeft.set(-1, 0, 0);
+	else cameraLeft.normalize();
+	// HEIGHT_LIFT  : altura del ojo sobre el target (subido desde 0.4 → más alto).
+	// LEFT_SHIFT   : fracción de distance a mover hacia la izquierda del espectador.
+	const HEIGHT_LIFT = 0.85;
+	const LEFT_SHIFT = 0.03;
+
+	const cameraPosition = intersectionCenter
+		.clone()
+		.add(intoRoom.clone().multiplyScalar(distance))
+		.add(cameraLeft.clone().multiplyScalar(LEFT_SHIFT * distance));
+	cameraPosition.y = intersectionCenter.y + HEIGHT_LIFT;
+
+	return {
+		name: "pared_1-pared_3",
+		label: "Sección · Comidas",
+		title: "Galería de Comidas",
+		description:
+			"Encuentro de las paredes 1 y 3: la esquina del museo dedicada a las tradiciones gastronómicas de cada región. Las dos paredes se abren en ángulo desde sus planos convergentes.",
+		isMonolith: false,
+		isChachapuma: false,
+		isFuente: false,
+		isInteractive: true,
+		isCuadro: false,
+		position: intersectionCenter.clone(),
+		lookDirection: intersectionCenter.clone().sub(cameraPosition).normalize(),
+		showPanel: false,
+		cameraPosition,
+		cameraTarget: intersectionCenter.clone(),
+	};
+}
+
 function applyTextureTo(material: Material | Material[], texture: Texture) {
 	const list = Array.isArray(material) ? material : [material];
 	for (const mat of list) {
@@ -918,6 +1014,161 @@ function CameraLight() {
 	);
 }
 
+/**
+ * Tarjeta lateral de "Objeto detectado". Incluye un botón dinámico de lectura
+ * por voz usando la Web Speech API (SpeechSynthesis): el mismo botón alterna
+ * entre ESCUCHAR / PAUSAR / REANUDAR según el estado de la locución.
+ *
+ * Estados posibles de la locución:
+ *   "idle"    → no se ha hablado nada o ya terminó (botón: "Escuchar")
+ *   "playing" → utterance sonando en este momento (botón: "Pausar")
+ *   "paused"  → utterance pausado por el usuario (botón: "Reanudar")
+ *
+ * El texto leído es SOLO el título (o label como fallback) y la descripción
+ * del artefacto, en una sola utterance. Si el navegador no soporta la API,
+ * el botón aparece deshabilitado con la marca "Sin audio".
+ *
+ * Al cambiar de artefacto o al desmontar la tarjeta, se cancela cualquier
+ * locución en curso y se resetea el estado local — así abrir un objeto nuevo
+ * nunca hereda la reproducción del anterior.
+ */
+type SpeechStatus = "idle" | "playing" | "paused";
+
+function ObjectCard({
+	artifact,
+	onClose,
+}: {
+	artifact: SelectedArtifact;
+	onClose: () => void;
+}) {
+	const [speechStatus, setSpeechStatus] = useState<SpeechStatus>("idle");
+
+	// Detección de soporte solo en cliente (useMemo: no se recalcula cada render).
+	const speechSupported = useMemo(
+		() =>
+			typeof window !== "undefined" &&
+			"speechSynthesis" in window &&
+			"SpeechSynthesisUtterance" in window,
+		[],
+	);
+
+	// Reset al cambiar de artefacto + cancela en curso. Cleanup adicional por
+	// si la tarjeta se desmonta sin cambio de prop (p. ej. el padre la cierra).
+	useEffect(() => {
+		setSpeechStatus("idle");
+		if (speechSupported) window.speechSynthesis.cancel();
+		return () => {
+			if (speechSupported) window.speechSynthesis.cancel();
+		};
+	}, [artifact.name, speechSupported]);
+
+	const handlePlay = () => {
+		if (!speechSupported) return;
+
+		const synth = window.speechSynthesis;
+		// Cancela cualquier utterance previa antes de empezar una nueva → evita
+		// lecturas superpuestas cuando el usuario pulsa rápido o cambia de objeto.
+		synth.cancel();
+
+		const title = (artifact.title ?? artifact.label).trim();
+		const description = artifact.description.trim();
+		const text = [title, description].filter(Boolean).join(". ");
+
+		const utter = new SpeechSynthesisUtterance(text);
+		// Idioma por defecto: español. Si no hay voces es-ES instaladas el
+		// navegador cae a su default — `voice` podría seleccionarse después si
+		// el usuario lo pide. Se mantiene simple por ahora.
+		utter.lang = "es-ES";
+		utter.rate = 1.0;
+		utter.pitch = 1.0;
+
+		// Handlers: mantienen `speechStatus` sincronizado con el utterance.
+		// onend/onerror también cubren el caso "cancel()" para regresar a idle.
+		utter.onstart = () => setSpeechStatus("playing");
+		utter.onpause = () => setSpeechStatus("paused");
+		utter.onresume = () => setSpeechStatus("playing");
+		utter.onend = () => setSpeechStatus("idle");
+		utter.onerror = () => setSpeechStatus("idle");
+
+		synth.speak(utter);
+	};
+
+	const handlePause = () => {
+		if (!speechSupported) return;
+		// `pause()` es un hold-en-cola en algunos navegadores; forzamos el estado
+		// a "paused" para que el botón reaccione aunque el evento onpause llegue
+		// tarde (o no llegue).
+		window.speechSynthesis.pause();
+		setSpeechStatus("paused");
+	};
+
+	const handleResume = () => {
+		if (!speechSupported) return;
+		window.speechSynthesis.resume();
+		setSpeechStatus("playing");
+	};
+
+	const handleToggle = () => {
+		if (speechStatus === "idle") handlePlay();
+		else if (speechStatus === "playing") handlePause();
+		else handleResume();
+	};
+
+	const buttonText = !speechSupported
+		? "Sin audio"
+		: speechStatus === "idle"
+			? "Escuchar"
+			: speechStatus === "playing"
+				? "Pausar"
+				: "Reanudar";
+
+	return (
+		<div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-end p-4 sm:p-6 lg:p-8">
+			<div className="pointer-events-auto w-full max-w-md rounded-3xl border border-white/10 bg-black/80 p-5 text-white shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+				<div className="flex items-start justify-between gap-4">
+					<div>
+						<p className="text-xs uppercase tracking-[0.3em] text-amber-100/75">Objeto detectado</p>
+						<h2 className="mt-2 text-2xl font-semibold text-white">{artifact.title ?? artifact.label}</h2>
+					</div>
+					<div className="flex shrink-0 items-center gap-2">
+						<button
+							type="button"
+							onClick={handleToggle}
+							disabled={!speechSupported}
+							aria-label={`TTS · ${buttonText}`}
+							title={buttonText}
+							aria-pressed={speechStatus === "playing"}
+							className="rounded-full border border-white/10 bg-white/5 inline-flex h-8 w-8 items-center justify-center text-white/80 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+						>
+						{!speechSupported ? <FiPlay className="h-4 w-4 opacity-50" /> : speechStatus === "playing" ? <FiPause className="h-4 w-4" /> : <FiPlay className="h-4 w-4" />	}
+						</button>
+						<button
+							type="button"
+							onClick={onClose}
+							className="rounded-full border border-white/10 bg-white/5 inline-flex h-8 w-8 items-center justify-center text-white/80 transition hover:bg-white/10"
+						>
+							Cerrar
+						</button>
+					</div>
+				</div>
+				<p className="mt-4 text-sm leading-6 text-slate-200/90">{artifact.description}</p>
+				<div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-300/80">
+					<span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">{artifact.name}</span>
+					{artifact.isMonolith && (
+						<span className="rounded-full border border-amber-200/20 bg-amber-200/10 px-3 py-1 text-amber-50">Monolito</span>
+					)}
+					{artifact.isChachapuma && (
+						<span className="rounded-full border border-emerald-200/20 bg-emerald-200/10 px-3 py-1 text-emerald-50">Chachapuma</span>
+					)}
+					{artifact.isFuente && (
+						<span className="rounded-full border border-blue-200/20 bg-blue-200/10 px-3 py-1 text-blue-50">Fuente</span>
+					)}
+				</div>
+			</div>
+		</div>
+	);
+}
+
 function MuseumView({ cuadros }: { cuadros: Cuadro[] }) {
 	const [selectedArtifact, setSelectedArtifact] = useState<SelectedArtifact | null>(null);
 	const [activeSection, setActiveSection] = useState<string | null>(null);
@@ -947,11 +1198,14 @@ function MuseumView({ cuadros }: { cuadros: Cuadro[] }) {
 
 		// Cada sección con `wall` usa su movimiento propio:
 		//   - "historia"                 → vista CENITAL del pedestal_presentacion.
+		//   - "comidas"                  → esquina interior donde se encuentran pared_1 y pared_3.
 		//   - "fiestas"/"independencia"  → vista frontal de una cara de pared_6.
 		//   - las demás (p. ej. "lugares") → encuadre en 3/4 de la pared (buildWallArtifact).
 		let artifact: SelectedArtifact | null;
 		if (sectionId === "historia") {
 			artifact = buildPedestalPresentacionArtifact(scene, fov);
+		} else if (sectionId === "comidas") {
+			artifact = buildComidasIntersectionArtifact(scene, fov);
 		} else if (sectionId === "fiestas" || sectionId === "independencia") {
 			artifact = buildFrontalWallArtifact(scene, wallName, fov, sectionId);
 		} else {
@@ -1218,38 +1472,9 @@ function MuseumView({ cuadros }: { cuadros: Cuadro[] }) {
 
 			<FloatingMenu onSelectSection={handleSelectSection} activeSection={activeSection} />
 
-			{selectedArtifact && selectedArtifact.showPanel !== false ? (
-				<div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-end p-4 sm:p-6 lg:p-8">
-					<div className="pointer-events-auto w-full max-w-md rounded-3xl border border-white/10 bg-black/80 p-5 text-white shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl">
-						<div className="flex items-start justify-between gap-4">
-							<div>
-								<p className="text-xs uppercase tracking-[0.3em] text-amber-100/75">Objeto detectado</p>
-								<h2 className="mt-2 text-2xl font-semibold text-white">{selectedArtifact.title ?? selectedArtifact.label}</h2>
-							</div>
-							<button
-								type="button"
-								onClick={closeSelection}
-								className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-sm text-white/80 transition hover:bg-white/10"
-							>
-								Cerrar
-							</button>
-						</div>
-						<p className="mt-4 text-sm leading-6 text-slate-200/90">{selectedArtifact.description}</p>
-						<div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-300/80">
-							<span className="rounded-full border border-white/10 bg-white/5 px-3 py-1">{selectedArtifact.name}</span>
-							{selectedArtifact.isMonolith && (
-								<span className="rounded-full border border-amber-200/20 bg-amber-200/10 px-3 py-1 text-amber-50">Monolito</span>
-							)}
-							{selectedArtifact.isChachapuma && (
-								<span className="rounded-full border border-emerald-200/20 bg-emerald-200/10 px-3 py-1 text-emerald-50">Chachapuma</span>
-							)}
-							{selectedArtifact.isFuente && (
-								<span className="rounded-full border border-blue-200/20 bg-blue-200/10 px-3 py-1 text-blue-50">Fuente</span>
-							)}
-						</div>
-					</div>
-				</div>
-			) : null}
+				{selectedArtifact && selectedArtifact.showPanel !== false ? (
+					<ObjectCard artifact={selectedArtifact} onClose={closeSelection} />
+				) : null}
 		</section>
 	);
 }

@@ -11,7 +11,7 @@ const SECCIONES = [
 	{ id: "independencia", label: "Independencia", wall: "pared_6" },
 	{ id: "historia", label: "Historia", wall: "pedestal_presentacion" },
 	{ id: "lugares", label: "Lugares", wall: "pared_1" },
-	{ id: "comidas", label: "Comidas" },
+	{ id: "comidas", label: "Comidas", wall: "pared_1-pared_3" },
 	{ id: "fiestas", label: "Fiestas", wall: "pared_6" },
 ] as const;
 
