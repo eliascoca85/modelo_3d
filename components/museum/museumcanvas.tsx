@@ -1147,7 +1147,7 @@ function ObjectCard({
 							onClick={onClose}
 							className="rounded-full border border-white/10 bg-white/5 inline-flex h-8 w-8 items-center justify-center text-white/80 transition hover:bg-white/10"
 						>
-							Cerrar
+							X
 						</button>
 					</div>
 				</div>
