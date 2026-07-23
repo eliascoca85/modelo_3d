@@ -191,7 +191,7 @@ export default function LoadingScreen({ progress, onEnter }: LoadingScreenProps)
 			{/* Título + bajada */}
 			<div className="relative mt-10">
 				<h1 className="ms-fade-up bg-gradient-to-b from-white to-amber-100 bg-clip-text text-3xl font-semibold tracking-wide text-transparent sm:text-4xl" style={{ animationDelay: "0.15s" }}>
-					Museo Inmersivo
+					Museo Boliviano
 				</h1>
 				<p className="ms-fade-up mt-3 text-sm uppercase tracking-[0.35em] text-amber-100/70" style={{ animationDelay: "0.25s" }}>
 					Una experiencia patrimonial en 3D

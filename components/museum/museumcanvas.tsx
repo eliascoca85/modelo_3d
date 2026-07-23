@@ -330,8 +330,8 @@ function buildWallArtifact(scene: Object3D, wallName: string, cameraFov: number)
 	// Yaw y pitch son ÁNGULOS (radianes) aplicados sobre un arco de radio =
 	// `distance`: la distancia Euclídea cámara↔target se conserva y la
 	// inclinación es estable sin importar la distancia de la pared. pitch se
-	// mantiene dentro del maxPolarAngle (~100.8°) de OrbitControls para que no
-	// autocorrige el ángulo al final del vuelo.
+	// mantiene dentro del maxPolarAngle (π/2 = horizonte) de OrbitControls para
+	// que no autocorrige el ángulo al final del vuelo.
 	//   YAW_RAD        : giro en planta (3/4); cambiar de signo para el otro lado.
 	//   LOOK_DOWN_RAD  : cuánto sube la cámara sobre el target (mira hacia abajo).
 	const YAW_RAD = -0.17;        // ~10°
@@ -636,7 +636,7 @@ function buildFrontalWallArtifact(
 	// ALTA que el target (CAMERA_LIFT) → leve mirada picada que encuadra el muro
 	// desde arriba sin dejar de ser de frente. Permanece escochada igual con el
 	// desplazamiento lateral ya aplicado. El polar queda dentro del
-	// maxPolarAngle (~100.8°) de OrbitControls para que no autocorrige al final.
+	// maxPolarAngle (π/2) de OrbitControls para que no autocorrige al final.
 	const CAMERA_LIFT = 0.12;
 	const cameraPosition = focusPointShifted.clone().add(intoRoom.clone().multiplyScalar(distance));
 	cameraPosition.y = focusPoint.y + wallHeight * CAMERA_LIFT;
@@ -675,7 +675,7 @@ function buildFrontalWallArtifact(
  * la planta (X/Z) para que esa cara entre completa en el FOV. La cámara queda
  * casi encima (predomina el offset en Z, apenas en X) con un ligero ángulo
  * desde la vertical para que la escena se lea en perspectiva y se mantenga
- * dentro del maxPolarAngle (~100.8°) de OrbitControls.
+ * dentro del maxPolarAngle (π/2) de OrbitControls.
  */
 function buildPedestalPresentacionArtifact(
 	scene: Object3D,
@@ -709,8 +709,8 @@ function buildPedestalPresentacionArtifact(
 	// Cámara ARRIBA del pedestal con una leve inclinación hacia adelante para
 	// que la escena se lea en perspectiva (no totalmente vertical).
 	// TOP_DOWN_PITCH_RAD es el ángulo DESDE la vertical (0 = cenital puro).
-	// El polar resultante queda dentro del maxPolarAngle de OrbitControls
-	// (~100.8°) para que no se autocorra al final del vuelo.
+	// El polar resultante (~73°) queda dentro del maxPolarAngle de OrbitControls
+	// (π/2 = horizonte) para que no se autocorra al final del vuelo.
 	const TOP_DOWN_PITCH_RAD = 0.3; // ~17° desde la vertical → polar ~73°
 
 	const horizOffset = distance * Math.sin(TOP_DOWN_PITCH_RAD);
@@ -1549,7 +1549,14 @@ function MuseumView({ cuadros }: { cuadros: Cuadro[] }) {
 						enablePan={false}
 						minDistance={0.3}
 						maxDistance={13}
-						maxPolarAngle={Math.PI * 0.56}
+						// π/2 = horizonte exacto: la cámara nunca baja por debajo del
+						// target, de modo que no se puede asomar por DEBAJO del piso de
+						// la escena. Antes era π·0.56 (~100.8°, ~10° pasando el
+						// horizonte) y dejaba ver debajo del escenario. Los
+						// constructores de cámara ya plantan la pose por ENCIMA del
+						// target (polar < 90°), así que este límite no autocorrige al
+						// final del vuelo.
+						maxPolarAngle={Math.PI / 2}
 						target={[0, -0.5, 0]}
 						autoRotate={false}
 					/>
