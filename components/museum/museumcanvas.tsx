@@ -6,6 +6,7 @@ import {
 	Html,
 	OrbitControls,
 	useGLTF,
+	useProgress,
 	useTexture,
 } from "@react-three/drei";
 import {
@@ -23,6 +24,8 @@ import {
 
 import { cuadroDisplayName, CUADRO_NAME_PATTERN, type Cuadro } from "@/types/cuadros";
 import FloatingMenu from "@/components/museum/floating-menu";
+import AmbientMusic, { type AmbientMusicHandle } from "@/components/museum/ambient-music";
+import LoadingScreen from "@/components/museum/loading-screen";
 import { FiPlay, FiPause, FiX } from "react-icons/fi";
 
 const MODEL_URL = "/models/museo-compresion.glb";
@@ -1235,12 +1238,32 @@ function ObjectCard({
 function MuseumView({ cuadros }: { cuadros: Cuadro[] }) {
 	const [selectedArtifact, setSelectedArtifact] = useState<SelectedArtifact | null>(null);
 	const [activeSection, setActiveSection] = useState<string | null>(null);
+	// ¿Se mostró la pantalla de carga? Mientras `loading` sea true, cubre la
+	// escena; al pulsar "Entrar" se desactiva y se dispara la música de ambiente
+	// (ese gesto del usuario desbloquea el audio, exigido por la autoplay policy).
+	const [loading, setLoading] = useState(true);
+	// Progreso de carga reportado por drei (0..100) para la barra del loader.
+	const { progress, active } = useProgress();
+	// Ref a la API imperativa de la música (autoplay/play/pause).
+	const musicRef = useRef<AmbientMusicHandle>(null);
 	// Referencia a la escena 3D cargada: MuseoScene la llena cuando el GLB está
 	// listo, para poder buscar paredes por nombre desde el menú de secciones.
 	const sceneRef = useRef<Object3D | null>(null);
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const controlsRef = useRef<any>(null);
 	const animationFrameIdRef = useRef<number | null>(null);
+
+	// Al pulsar "Entrar" en la pantalla de carga: ese clic es el primer gesto del
+	// usuario, válido para desbloquear el audio → disparar la música de ambiente.
+	// IMPORTANTE: `autoplay()` se llama ANTES de `setLoading(false)` y de forma
+	// síncrona (sin `setTimeout` en la pantalla de carga): el `AudioContext.resume()`
+	// del música queda DENTRO del gesto del usuario. Si el resume cayese fuera del
+	// gesto (p. ej. tras un timer), la autoplay policy del navegador lo rechazaría y
+	// la música nunca sonaría. El desmonte de la pantalla tras arrancar el audio.
+	const handleEnter = useCallback(() => {
+		musicRef.current?.autoplay();
+		setLoading(false);
+	}, []);
 
 	const handleSceneReady = useCallback((scene: Object3D) => {
 		sceneRef.current = scene;
@@ -1535,9 +1558,20 @@ function MuseumView({ cuadros }: { cuadros: Cuadro[] }) {
 
 			<FloatingMenu onSelectSection={handleSelectSection} activeSection={activeSection} />
 
+			<AmbientMusic ref={musicRef} />
+
 				{selectedArtifact && selectedArtifact.showPanel !== false ? (
 					<ObjectCard artifact={selectedArtifact} onClose={closeSelection} />
 				) : null}
+
+			{/* Pantalla de carga sobre la escena hasta que todo esté listo y el
+				usuario pulse "Entrar". El progreso real (drei useProgress) llena la
+				barra; cuando no hay cargas pendientes se marca como listo. El botón
+				"Entrar" dispara la música (autoplay, gesto que desbloquea el audio) y
+				revela el museo. */}
+			{loading ? (
+				<LoadingScreen progress={active ? progress / 100 : 1} onEnter={handleEnter} />
+			) : null}
 		</section>
 	);
 }
