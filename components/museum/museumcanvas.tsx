@@ -94,6 +94,24 @@ function findNamedObject(object: Object3D | null): Object3D | null {
 	return null;
 }
 
+/**
+ * ¿Es un objeto ESTRUCTURAL del museo? Paredes, pisos, pedestal_presentacion,
+ * pedestales genéricos, tripode_liviano y focos. Al pulsarlos en la escena no
+ * queremos ni tarjeta de info ni movimiento de cámara: el click debe quedar
+ * inerte (la navegación se hace solo desde el menú de secciones).
+ */
+function isStructuralName(name: string): boolean {
+	const n = name.trim().toLowerCase();
+	if (!n || n === "scene") return false;
+	return (
+		/^pared/i.test(n) ||
+		/^piso/i.test(n) ||
+		/^pedestal/i.test(n) ||
+		/^tripode/i.test(n) ||
+		/^foco/i.test(n)
+	);
+}
+
 function computeViewParams(
 	clickedObject: Object3D,
 	namedObject: Object3D,
@@ -1019,9 +1037,19 @@ function MuseumScene({
 			faceNormal = event.face.normal.clone().transformDirection(mesh.matrixWorld).normalize();
 		}
 
+		// Objetos ESTRUCTURALES (paredes, pisos, pedestal_presentacion,
+		// pedestales, tripode_liviano, focos): el click en la escena NO debe abrir
+		// la tarjeta de info NI mover la cámara. La única forma de navegar a una
+		// sección es el menú (FloatingMenu). Detectamos por nombre y salimos antes
+		// de construir/emitir cualquier artefacto → cero tarjeta, cero transición.
+		const resolvedName = resolveObjectLabel(event.object);
+		if (isStructuralName(resolvedName)) {
+			return;
+		}
+
 		onSelectArtifact(
 			buildArtifactDetails(
-				resolveObjectLabel(event.object),
+				resolvedName,
 				cuadrosMap,
 				clickedObject,
 				namedObject,
